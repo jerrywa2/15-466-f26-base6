@@ -18,6 +18,8 @@ Are your Physics Deterministic? If so, how can we verify this?
 
 Yes. You can verify by playing the game, then pressing V to verify the replay. It should match exactly what you saw when playing, and the game will also check if the hash state matches.
 
+You can also press D for fixed series of inputs to get the same outcome each time.
+
 Are your Physics Rewindable? If so, how can we verify this?
 
 Yes. Press backspace at any time to rewind. It's also a gameplay mechanic to help you undo mistakes!

@@ -372,6 +372,7 @@ static std::vector< PlayMode::Input > demo_inputs() {
 }
 
 void PlayMode::start_replay(std::vector< Input > const &replay_inputs, uint32_t expected_hash) {
+	if (replay_inputs.empty()) return; //nothing to replay
 	replay = replay_inputs;
 	replay_expected_hash = expected_hash;
 	replay_message = "";

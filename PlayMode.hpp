@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 struct PlayMode : Mode {
@@ -46,6 +47,19 @@ struct PlayMode : Mode {
 
     void reset();
     void step(Input const &input);
+	static uint32_t hash_state(State const &to_hash);
+
+	std::vector< State > history;
+	bool rewind_held = false;
+
+	//replay:
+	std::vector< Input > inputs;
+	std::vector< Input > replay;
+	bool replaying = false;
+	uint32_t replay_expected_hash = 0;
+	std::string replay_message = "";
+
+	void start_replay(std::vector< Input > const &replay_inputs, uint32_t expected_hash);
 
     //player controls
     Input pending;

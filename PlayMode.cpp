@@ -5,6 +5,17 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
+
+//DONT FUSE MULTIPLY-ADD
+#if defined(_MSC_VER)
+#pragma fp_contract(off)
+#elif defined(__clang__)
+#pragma STDC FP_CONTRACT OFF
+#else
+#pragma GCC optimize("fp-contract=off")
+#endif
 
 //------ tuning -----
 
@@ -143,6 +154,9 @@ void PlayMode::reset() {
 
 	pending = Input();
 	accumulator = 0.0f;
+
+	history.clear();
+	inputs.clear();
 }
 
 void PlayMode::step(Input const &input) {
@@ -309,6 +323,63 @@ void PlayMode::step(Input const &input) {
 	state.tick += 1;
 }
 
+//state hash
+uint32_t PlayMode::hash_state(State const &to_hash) {
+
+	uint32_t hash = 2166136261u;
+	auto add_int = [&hash](uint32_t value) {
+		for (uint32_t byte = 0; byte < 4; ++byte) {
+			hash ^= (value >> (8 * byte)) & 0xffu;
+			hash *= 16777619u;
+		}
+	};
+	auto add_float = [&add_int](float value) {
+		uint32_t bits;
+		std::memcpy(&bits, &value, 4);
+		add_int(bits);
+	};
+	for (Body const &body : to_hash.bodies) {
+		add_float(body.pos.x);
+		add_float(body.pos.y);
+		add_float(body.vel.x);
+		add_float(body.vel.y);
+		add_float(body.angle);
+		add_float(body.omega);
+		add_float(body.radius);
+		add_float(body.inv_mass);
+	}
+	add_float(to_hash.gravity);
+	add_int(to_hash.time_left);
+	add_int(to_hash.launched);
+	add_int(to_hash.spawn_count);
+	add_int(to_hash.tick);
+	return hash;
+}
+
+//---- determinism ----
+
+//test inputs
+constexpr uint32_t DemoHash = 0xC46E4DEEu;
+static std::vector< PlayMode::Input > demo_inputs() {
+	//demo inputs:
+	std::vector< PlayMode::Input > demo(30 + RunTicks);
+	demo[30].launch = 1;
+	demo[30].launch_vel = glm::vec2(20.0f, 8.0f);
+	for (uint32_t tick = 80; tick < demo.size(); tick += 50) {
+		demo[tick].flip = 1;
+	}
+	return demo;
+}
+
+void PlayMode::start_replay(std::vector< Input > const &replay_inputs, uint32_t expected_hash) {
+	replay = replay_inputs;
+	replay_expected_hash = expected_hash;
+	replay_message = "";
+	replaying = true;
+	paused = false;
+	reset();
+}
+
 //----- game -------
 
 PlayMode::PlayMode() {
@@ -335,11 +406,28 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 			if (!evt.key.repeat) pending.flip = 1;
 			return true;
 		} else if (evt.key.key == SDLK_R) {
+			replaying = false;
+			replay_message = "";
 			paused = false;
 			reset();
 			return true;
 		} else if (evt.key.key == SDLK_P) {
 			paused = !paused;
+			return true;
+		} else if (evt.key.key == SDLK_BACKSPACE) {
+			rewind_held = true;
+			return true;
+		} else if (evt.key.key == SDLK_V) {
+			//verify replay
+			start_replay(inputs, hash_state(state));
+			return true;
+		} else if (evt.key.key == SDLK_D) {
+			start_replay(demo_inputs(), DemoHash);
+			return true;
+		}
+	} else if (evt.type == SDL_EVENT_KEY_UP) {
+		if (evt.key.key == SDLK_BACKSPACE) {
+			rewind_held = false;
 			return true;
 		}
 	} else if (evt.type == SDL_EVENT_MOUSE_MOTION || evt.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
@@ -369,20 +457,49 @@ void PlayMode::update(float elapsed) {
 	while (accumulator >= Tick) {
 		accumulator -= Tick;
 
+		if (rewind_held) {
+			replaying = false;
+			replay_message = "";
+			for (uint32_t i = 0; i < 2; ++i) { //twice as fast as normal
+				if (history.empty()) break;
+				state = history.back();
+				history.pop_back();
+				inputs.pop_back();
+			}
+			pending = Input();
+			continue;
+		}
+  
 		if (paused) continue;
 		if (state.time_left == 0) continue; //run is over
 
 		Input input = pending;
 		pending = Input();
+		if (replaying) input = replay[state.tick];
 
+		history.emplace_back(state);
+		inputs.emplace_back(input);
 		step(input);
 
 		best_distance = std::max(best_distance, state.bodies[0].pos.x);
+
+		if (replaying && state.tick == replay.size()) {
+			//replay done
+			replaying = false;
+			paused = true;
+			char hex[16];
+			std::snprintf(hex, sizeof(hex), "%08X", replay_expected_hash);
+			if (hash_state(state) == replay_expected_hash) {
+				replay_message = "REPLAY MATCHED (expected " + std::string(hex) + ")";
+			} else {
+				replay_message = "REPLAY DID NOT MATCH (expected " + std::string(hex) + ")";
+			}
+		}
 	}
 }
 
 void PlayMode::draw(glm::uvec2 const &drawable_size) {
-	glClearColor(0.05f, 0.05f, 0.1f, 1.0f);
+	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 	glDisable(GL_DEPTH_TEST);
 
@@ -475,13 +592,18 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 			+ "   Gravity " + (state.gravity < 0.0f ? "down" : "up"), 0.0f);
 
 		std::string message;
-		if (paused) message = "Paused - P continues";
+		if (replay_message != "") message = replay_message;
+		else if (replaying) message = "Replaying recorded inputs...";
+		else if (rewind_held) message = "Rewinding...";
+		else if (paused) message = "Paused - P continues";
 		else if (!state.launched) message = "Aim with the mouse, click to shoot";
-		else if (state.time_left > 0) message = "Space flips gravity";
-		else message = "Time is up! - R restarts";
+		else if (state.time_left > 0) message = "Space flips gravity - Backspace to rewind if you get knocked back!";
+		else message = "Time is up - R restarts, hold Backspace to rewind";
 		text(message, 1.0f);
 
-		lines.draw_text("Space flip gravity   R restart   P pause",
+		char hex[16];
+		std::snprintf(hex, sizeof(hex), "%08X", hash_state(state));
+		lines.draw_text("Space flip   Backspace rewind   R restart   P pause   V verify replay   D determinism demo     state " + std::string(hex),
 			glm::vec3(-aspect + 0.5f * Size, -1.0f + 0.5f * Size, 0.0f),
 			glm::vec3(0.7f * Size, 0.0f, 0.0f), glm::vec3(0.0f, 0.7f * Size, 0.0f),
 			glm::u8vec4(0x88, 0x88, 0x88, 0xff));

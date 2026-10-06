@@ -1,8 +1,8 @@
-# (TODO: your game's title)
+# Gravity Shot
 
-Author: (TODO: your name)
+Author: Jerry Wang (jerrywa2)
 
-Design: (TODO: In two sentences or fewer, describe what is new and interesting about your game.)
+Design: This is a obstacle course game where the player shoots a ball, and uses gravity flipoing to try to get it as far as possible.
 
 Screen Shot:
 
@@ -10,7 +10,7 @@ Screen Shot:
 
 How To Play:
 
-(TODO: describe the controls and (if needed) goals/strategy.)
+Use space bar to flip gravity. Most of the ground and ceiling are slanted forwards, allowing you to bounce forwards if you're careful.
 
 ## Extra Credit
 
